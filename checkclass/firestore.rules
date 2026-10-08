@@ -1,0 +1,123 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function sessionData(code) {
+      return get(/databases/$(database)/documents/sessions/$(code)).data;
+    }
+
+    function isTeacher(code) {
+      return signedIn() && sessionData(code).teacherId == request.auth.uid;
+    }
+
+    match /sessions/{code} {
+      // Beitreten: Dokument per Code lesen. Auflisten ist verboten,
+      // damit niemand fremde Codes durchsuchen kann.
+      allow get: if signedIn();
+      allow list: if false;
+
+      allow create: if signedIn()
+        && code.matches('^[A-Z0-9]{4,6}$')
+        && request.resource.data.keys().hasOnly(
+             ['teacherId', 'question', 'currentQuestionId', 'active', 'createdAt'])
+        && request.resource.data.teacherId == request.auth.uid
+        && request.resource.data.question == ''
+        && request.resource.data.currentQuestionId == null
+        && request.resource.data.active == true
+        && request.resource.data.createdAt == request.time;
+
+      // Nur die Lehrkraft, nur laufende Sessions, nur diese Felder.
+      allow update: if signedIn()
+        && resource.data.teacherId == request.auth.uid
+        && resource.data.active == true
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['question', 'currentQuestionId', 'active'])
+        && request.resource.data.question is string
+        && request.resource.data.question.size() <= 200
+        && (request.resource.data.currentQuestionId is string
+            || request.resource.data.currentQuestionId == null)
+        && request.resource.data.active is bool;
+
+      allow delete: if false;
+
+      // Anonyme Teilnehmende: nur die uid, damit die Lehrkraft sieht,
+      // wie viele noch nicht geantwortet haben.
+      match /participants/{uid} {
+        allow get: if signedIn() && (uid == request.auth.uid || isTeacher(code));
+        allow list: if isTeacher(code);
+        allow create, update: if signedIn()
+          && uid == request.auth.uid
+          && sessionData(code).teacherId != request.auth.uid
+          && sessionData(code).active == true
+          && request.resource.data.keys().hasOnly(['joinedAt'])
+          && request.resource.data.joinedAt == request.time;
+        allow delete: if false;
+      }
+
+      match /questions/{questionId} {
+        allow get: if signedIn();
+        allow list: if false;
+
+        // Neue Fragen starten immer als "prepared" – nie direkt abstimmbar.
+        allow create: if isTeacher(code)
+          && sessionData(code).active == true
+          && request.resource.data.keys().hasOnly(['text', 'status', 'createdAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 200
+          && request.resource.data.status == 'prepared'
+          && request.resource.data.createdAt == request.time;
+
+        // Nur der Status darf sich ändern, nur vorwärts:
+        // prepared → open → closed (prepared → closed beim Ersetzen).
+        // Geöffnet werden darf nur die aktuelle Frage einer laufenden Session.
+        allow update: if isTeacher(code)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['prepared', 'open', 'closed']
+          && (
+            request.resource.data.status == resource.data.status
+            || (resource.data.status == 'prepared'
+                && request.resource.data.status in ['open', 'closed'])
+            || (resource.data.status == 'open'
+                && request.resource.data.status == 'closed')
+          )
+          && (
+            request.resource.data.status != 'open'
+            || (sessionData(code).active == true
+                && sessionData(code).currentQuestionId == questionId)
+          );
+
+        allow delete: if false;
+
+        match /votes/{uid} {
+          // Schüler lesen nur die eigene Stimme, die Lehrkraft alle.
+          allow get: if signedIn() && (uid == request.auth.uid || isTeacher(code));
+          allow list: if isTeacher(code);
+
+          // Genau eine Stimme pro Nutzer: create ist nur möglich, wenn das
+          // Dokument noch nicht existiert. update/delete sind immer verboten.
+          allow create: if signedIn()
+            && uid == request.auth.uid
+            && sessionData(code).teacherId != request.auth.uid
+            && sessionData(code).active == true
+            && get(/databases/$(database)/documents/sessions/$(code)/questions/$(questionId)).data.status == 'open'
+            && request.resource.data.keys().hasOnly(['answer', 'createdAt'])
+            && request.resource.data.answer in ['yes', 'no']
+            && request.resource.data.createdAt == request.time;
+
+          allow update, delete: if false;
+        }
+      }
+    }
+
+    // Alles andere ist gesperrt.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

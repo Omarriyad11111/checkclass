@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "869262005442",
+    "project_id": "checkclass-f0e86",
+    "storage_bucket": "checkclass-f0e86.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:869262005442:android:f6bcf0e2623f73b0d4975b",
+        "android_client_info": {
+          "package_name": "com.example.checkclass"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCxSPQPnEQzxaMb8MLkEMm3kHaIUhdhxJ0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
